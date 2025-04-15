@@ -5,9 +5,11 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.*;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import javax.sound.sampled.*;
 import udp.classes.CDR;
+import udp.classes.DBConnection;
 
 public class Receiver {
     private static final int PORT = 5000;
@@ -69,6 +71,10 @@ public class Receiver {
                             System.out.println("Received CDR: " + cdrData);
                             // Process CDR data
                             processCDR(cdrData);
+                            // Update Balance in DB
+                            updateBalance(cdrData);
+
+
                         } else if (controlMessage.equals("END_CALL")) {
                             System.out.println("Received end call signal");
                             callEnded = true;  // Set flag
@@ -107,19 +113,8 @@ public class Receiver {
 
     private static void processCDR(String cdrData) {
         try {
-            String[] parts = cdrData.split(",");
-            if (parts.length >= 7) {
-                CDR cdr = new CDR(
-                    parts[0].trim(), // callingNumber
-                    parts[1].trim(), // calledNumber
-                    Integer.parseInt(parts[4].trim()), // duration
-                    parts[2].trim(), // timeStart
-                    parts[3].trim(), // timeEnd
-                    parts[5].trim(), // callStatus
-                    Double.parseDouble(parts[6].trim()) // balance
-                );
-                cdr.exportToFile("cdr_records.csv", true);
-            }
+            CDR cdr = parseCDR(cdrData);
+            cdr.exportToFile("CDRs/"+cdr.getCallingNumber()+"_"+cdr.getTimeEnd()+".CDR", true);
         } catch (Exception e) {
             System.err.println("Error processing CDR: " + e.getMessage());
         }
@@ -165,5 +160,34 @@ public class Receiver {
         speakers.start();
         return speakers;
     }
+ 
+    // Update Balance in DB
+    private static void updateBalance(String cdrData) {
+        try {
+            // Connect to the database
+            DBConnection connection = new DBConnection("jdbc:postgresql://localhost:5432/balance_db", "postgres", "123");
+            CDR cdr = parseCDR(cdrData);
+            // Update the balance
+            String query = "UPDATE users SET balance = ? WHERE msisdn = ?";
+            PreparedStatement stmt = ((Connection) connection).prepareStatement(query);
+            stmt.setDouble(1, cdr.getBalance());
+            stmt.setString(2, cdr.getCallingNumber());
+            stmt.executeUpdate();
+        } catch (SQLException e) {
+            System.err.println("Error updating balance: " + e.getMessage());
+        }
+    }   
+    
+    //data to CDR object
+    private static CDR parseCDR(String cdrData) {
+        String[] parts = cdrData.split(",");
+        return new CDR(parts[0].trim(), parts[1].trim(), Integer.parseInt(parts[4].trim()), parts[2].trim(), parts[3].trim(), parts[5].trim(), Double.parseDouble(parts[6].trim()));
+    }
+
+
+
+
+
+
 }
 
