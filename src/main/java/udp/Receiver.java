@@ -10,6 +10,10 @@ import java.sql.SQLException;
 import javax.sound.sampled.*;
 import udp.classes.CDR;
 import udp.classes.DBConnection;
+import udp.classes.MongoConnection;
+import com.mongodb.client.MongoDatabase;
+import org.bson.Document;
+
 
 public class Receiver {
     private static final int PORT = 5000;
@@ -60,6 +64,8 @@ public class Receiver {
             // Start audio reception
             byte[] buffer = new byte[BUFFER_SIZE];
             System.out.println("Starting audio reception...");
+
+
             
             // Create TCP listener thread for control messages
             Thread controlThread = new Thread(() -> {
@@ -73,7 +79,8 @@ public class Receiver {
                             processCDR(cdrData);
                             // Update Balance in DB
                             updateBalance(cdrData);
-
+                            // Insert CDR in MongoDB
+                            MongoConnection.insertCDR(cdrData); 
 
                         } else if (controlMessage.equals("END_CALL")) {
                             System.out.println("Received end call signal");
@@ -89,6 +96,8 @@ public class Receiver {
             });
             controlThread.start();
 
+
+
             // Main audio loop
             while (!Thread.interrupted() && !callEnded) {
                 try {
@@ -102,7 +111,9 @@ public class Receiver {
                 }
             }
             
+
             System.out.println("Main audio loop exited");
+
 
         } catch (Exception e) {
             e.printStackTrace();
@@ -114,11 +125,17 @@ public class Receiver {
     private static void processCDR(String cdrData) {
         try {
             CDR cdr = parseCDR(cdrData);
-            cdr.exportToFile("CDRs/"+cdr.getCallingNumber()+"_"+cdr.getTimeEnd()+".CDR", true);
+            String safeFileName = MongoConnection.generateFileName(cdr.getCallingNumber(), cdr.getTimeEnd());
+            cdr.exportToFile("CDRs/" + safeFileName, true);
         } catch (Exception e) {
             System.err.println("Error processing CDR: " + e.getMessage());
         }
     }
+
+
+
+
+
 
     private static void cleanupResources(SourceDataLine speakers, DatagramSocket udpSocket, 
                                        ServerSocket tcpServer, Connection conn) {
@@ -143,6 +160,11 @@ public class Receiver {
         }
     }
 
+
+
+
+
+
     private static AudioFormat setupAudioFormat() {
         return new AudioFormat(
             SAMPLE_RATE,
@@ -153,6 +175,15 @@ public class Receiver {
         );
     }
 
+
+
+
+
+
+
+
+
+
     private static SourceDataLine setupSpeakers(AudioFormat format) throws LineUnavailableException {
         DataLine.Info info = new DataLine.Info(SourceDataLine.class, format);
         SourceDataLine speakers = (SourceDataLine) AudioSystem.getLine(info);
@@ -161,23 +192,43 @@ public class Receiver {
         return speakers;
     }
  
-    // Update Balance in DB
-    private static void updateBalance(String cdrData) {
-        try {
-            // Connect to the database
-            DBConnection connection = new DBConnection("jdbc:postgresql://localhost:5432/balance_db", "postgres", "123");
-            CDR cdr = parseCDR(cdrData);
-            // Update the balance
-            String query = "UPDATE users SET balance = ? WHERE msisdn = ?";
-            PreparedStatement stmt = ((Connection) connection).prepareStatement(query);
-            stmt.setDouble(1, cdr.getBalance());
-            stmt.setString(2, cdr.getCallingNumber());
-            stmt.executeUpdate();
-        } catch (SQLException e) {
-            System.err.println("Error updating balance: " + e.getMessage());
-        }
-    }   
+
+
+
+// Update Balance in DB
+private static void updateBalance(String cdrData) {
+    try {
+        // Connect to the database
+        DBConnection connection = new DBConnection("jdbc:postgresql://localhost:5432/balance_db", "postgres", "123");
+        CDR cdr = parseCDR(cdrData);
+        
+        // Get a java.sql.Connection from DBConnection
+        java.sql.Connection conn = connection.connect();
+        
+        // Update the balance
+        String query = "UPDATE users SET balance = ? WHERE msisdn = ?";
+        PreparedStatement stmt = conn.prepareStatement(query);
+        stmt.setDouble(1, cdr.getBalance());
+        stmt.setString(2, cdr.getCallingNumber());
+        stmt.executeUpdate();
+        
+        // Close the connection when done
+        connection.closeConnection(conn);
+    } catch (Exception e) {
+        System.err.println("Error updating balance: " + e.getMessage());
+    }
+}   
     
+
+
+
+
+
+
+
+
+
+
     //data to CDR object
     private static CDR parseCDR(String cdrData) {
         String[] parts = cdrData.split(",");
